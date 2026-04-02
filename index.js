@@ -37,14 +37,12 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 (async()=>{ await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID),{body:commands}); })();
 
 /* ===== READY ===== */
-client.on('ready',()=>console.log(`✅ Bot działa jako ${client.user.tag}`));
+client.once('ready',()=>console.log(`✅ Bot działa jako ${client.user.tag}`));
 
 /* ===== PANEL ===== */
 async function updatePanel() {
   const panel = loadPanel();
   if(!panel) return;
-  const channel = await client.channels.fetch(panel.channelId);
-  const message = await channel.messages.fetch(panel.messageId);
 
   const tasks = loadTasks();
   const total = tasks.length;
@@ -69,7 +67,22 @@ async function updatePanel() {
     new ButtonBuilder().setCustomId('status_done').setLabel('✅ Wykonane').setStyle(ButtonStyle.Success)
   );
 
-  message.edit({embeds:[embed],components:[row]});
+  try {
+    const channel = await client.channels.fetch(panel.channelId);
+    let message;
+    try {
+      message = await channel.messages.fetch(panel.messageId);
+    } catch(e) {
+      if(e.code===10008){ // wiadomość nie istnieje
+        message = await channel.send({embeds:[embed], components:[row]});
+        savePanel({channelId:channel.id, messageId:message.id});
+        return;
+      } else throw e;
+    }
+    await message.edit({embeds:[embed], components:[row]});
+  } catch(err){
+    console.error('Błąd updatePanel:', err);
+  }
 }
 
 /* ===== INTERACTIONS ===== */
@@ -95,7 +108,7 @@ client.on('interactionCreate', async interaction=>{
     /* CREATE PANEL */
     if(interaction.commandName==='panel'){
       const embed = new EmbedBuilder().setTitle('📊 Week Tasks');
-      const msg = await interaction.reply({embeds:[embed],fetchReply:true});
+      const msg = await interaction.reply({embeds:[embed], fetchReply:true});
       savePanel({channelId:msg.channel.id,messageId:msg.id});
       updatePanel();
     }
@@ -145,7 +158,7 @@ client.on('interactionCreate', async interaction=>{
       return interaction.reply('🔄 Tydzień został zresetowany');
     }
 
-  } // END slash
+  }
 
   /* MODAL SUBMIT */
   if(interaction.isModalSubmit()){
@@ -217,13 +230,8 @@ client.on('interactionCreate', async interaction=>{
       return interaction.reply({content:`Status zmieniony na ${interaction.customId}`,ephemeral:true});
     }
   }
-
 });
 
 /* ===== LOGIN & KEEPALIVE RAILWAY ===== */
 client.login(TOKEN);
 setInterval(()=>{},1000*60*5);
-  }
-});
-
-client.login(TOKEN);
