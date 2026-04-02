@@ -1,6 +1,7 @@
 const { 
   Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ModalBuilder,
-  TextInputBuilder, TextInputStyle, REST, Routes, SlashCommandBuilder
+  TextInputBuilder, TextInputStyle, REST, Routes, SlashCommandBuilder, ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 const fs = require('fs');
 
@@ -15,13 +16,13 @@ const PANEL_FILE = './panel.json';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
-/* ========== DB ========== */
+/* ===== DB ===== */
 function loadTasks() { if(!fs.existsSync(DB_FILE)) return []; return JSON.parse(fs.readFileSync(DB_FILE)); }
 function saveTasks(tasks){ fs.writeFileSync(DB_FILE, JSON.stringify(tasks,null,2)); }
 function savePanel(data){ fs.writeFileSync(PANEL_FILE, JSON.stringify(data)); }
 function loadPanel(){ if(!fs.existsSync(PANEL_FILE)) return null; return JSON.parse(fs.readFileSync(PANEL_FILE)); }
 
-/* ========== COMMANDS ========== */
+/* ===== COMMANDS ===== */
 const commands = [
   new SlashCommandBuilder().setName('addtask').setDescription('Dodaj nowe zadanie'),
   new SlashCommandBuilder().setName('panel').setDescription('Utwórz panel'),
@@ -35,10 +36,10 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 (async()=>{ await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID),{body:commands}); })();
 
-/* ========== READY ========== */
+/* ===== READY ===== */
 client.on('ready',()=>console.log(`✅ Bot działa jako ${client.user.tag}`));
 
-/* ========== PANEL ========== */
+/* ===== PANEL ===== */
 async function updatePanel() {
   const panel = loadPanel();
   if(!panel) return;
@@ -62,10 +63,16 @@ async function updatePanel() {
     .setColor(0x00ffcc)
     .setTimestamp();
 
-  message.edit({embeds:[embed]});
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('status_not').setLabel('❌ Nie rozpoczęte').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('status_progress').setLabel('⏳ W trakcie').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('status_done').setLabel('✅ Wykonane').setStyle(ButtonStyle.Success)
+  );
+
+  message.edit({embeds:[embed],components:[row]});
 }
 
-/* ========== INTERACTIONS ========== */
+/* ===== INTERACTIONS ===== */
 client.on('interactionCreate', async interaction=>{
   if(interaction.isChatInputCommand()){
 
@@ -76,14 +83,12 @@ client.on('interactionCreate', async interaction=>{
       const name=new TextInputBuilder().setCustomId('name').setLabel('Nazwa').setStyle(TextInputStyle.Short);
       const reward=new TextInputBuilder().setCustomId('reward').setLabel('Premia').setStyle(TextInputStyle.Short);
       const desc=new TextInputBuilder().setCustomId('desc').setLabel('Opis').setStyle(TextInputStyle.Paragraph);
-
       modal.addComponents(
         new ActionRowBuilder().addComponents(id),
         new ActionRowBuilder().addComponents(name),
         new ActionRowBuilder().addComponents(reward),
         new ActionRowBuilder().addComponents(desc)
       );
-
       return interaction.showModal(modal);
     }
 
@@ -103,11 +108,9 @@ client.on('interactionCreate', async interaction=>{
       const tasks = loadTasks();
       const task = tasks.find(t=>t.id==id);
       if(!task) return interaction.reply('❌ Nie ma taska');
-
       task.status='done';
       saveTasks(tasks);
       updatePanel();
-
       const embed = new EmbedBuilder()
         .setTitle('✅ Zadanie ukończone!')
         .addFields(
@@ -117,7 +120,6 @@ client.on('interactionCreate', async interaction=>{
         )
         .setColor(0x00ff00)
         .setTimestamp();
-
       return interaction.reply({embeds:[embed]});
     }
 
@@ -126,12 +128,10 @@ client.on('interactionCreate', async interaction=>{
       const modal = new ModalBuilder()
         .setCustomId(`decline_${interaction.options.getString('id')}`)
         .setTitle('Powód odrzucenia');
-
       const reason = new TextInputBuilder()
         .setCustomId('reason')
         .setLabel('Dlaczego odrzucono?')
         .setStyle(TextInputStyle.Paragraph);
-
       modal.addComponents(new ActionRowBuilder().addComponents(reason));
       return interaction.showModal(modal);
     }
@@ -149,7 +149,6 @@ client.on('interactionCreate', async interaction=>{
 
   /* MODAL SUBMIT */
   if(interaction.isModalSubmit()){
-
     if(interaction.customId==='addTask'){
       const tasks = loadTasks();
       const newTask = {
@@ -163,7 +162,6 @@ client.on('interactionCreate', async interaction=>{
       saveTasks(tasks);
       updatePanel();
 
-      // Tworzenie wątku
       const channel = interaction.channel;
       const thread = await channel.threads.create({
         name:`Task-${newTask.id} | ${newTask.name}`,
@@ -182,20 +180,17 @@ client.on('interactionCreate', async interaction=>{
         .setTimestamp();
 
       thread.send({embeds:[embed]});
-
       return interaction.reply({content:'✅ Dodano zadanie i utworzono wątek',ephemeral:true});
     }
 
     if(interaction.customId.startsWith('decline_')){
       const id = interaction.customId.split('_')[1];
       const reason = interaction.fields.getTextInputValue('reason');
-
       const tasks = loadTasks();
       const task = tasks.find(t=>t.id==id);
       if(task) task.status='not';
       saveTasks(tasks);
       updatePanel();
-
       const embed = new EmbedBuilder()
         .setTitle('❌ Zadanie odrzucone!')
         .addFields(
@@ -204,15 +199,30 @@ client.on('interactionCreate', async interaction=>{
         )
         .setColor(0xff0000)
         .setTimestamp();
-
       return interaction.reply({embeds:[embed]});
     }
+  }
 
+  /* BUTTONS STATUS */
+  if(interaction.isButton()){
+    if(!interaction.member.roles.cache.has(LEADER_ROLE_ID)) 
+      return interaction.reply({content:'❌ Tylko lider może zmieniać status',ephemeral:true});
+    const tasks = loadTasks();
+    const statusMap = {'status_not':'not','status_progress':'progress','status_done':'done'};
+    const taskStatus = statusMap[interaction.customId];
+    if(tasks.length>0){
+      tasks[tasks.length-1].status = taskStatus;
+      saveTasks(tasks);
+      updatePanel();
+      return interaction.reply({content:`Status zmieniony na ${interaction.customId}`,ephemeral:true});
+    }
   }
 
 });
 
+/* ===== LOGIN & KEEPALIVE RAILWAY ===== */
 client.login(TOKEN);
+setInterval(()=>{},1000*60*5);
   }
 });
 
